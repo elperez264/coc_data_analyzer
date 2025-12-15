@@ -11,3 +11,4 @@ notas.txt
 *.pyc
 /BD/
 /DB/BetisDB.db
+.env
