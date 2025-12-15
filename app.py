@@ -15,8 +15,10 @@ from dotenv import load_dotenv
 import torch
 import asyncio
 import requests
+from config import DB_PATH
 
 torch.classes.__path__ = []
+
 
 
 
@@ -35,6 +37,7 @@ async def main_async():
     password = os.getenv("COCKEY")
     my_clan = os.getenv("MY_CLAN")
 
+
     if not email or not password:
         raise RuntimeError(
             f"EMAIL o COCKEY no están definidos correctamente. "
@@ -45,9 +48,8 @@ async def main_async():
     betis_clan_tag = await coc_comm.get_clan_tag("Betis CoC Club")
     clan_info = await coc_comm.get_clan_info(betis_clan_tag)
     betis_clan = Clan.from_dict(clan_info)
-    db_adapter = SQLiteAdapter(db_name="DB/BetisDB.db")
+    db_adapter = SQLiteAdapter(db_name=DB_PATH)
 
-    # await coc_comm.get_war_players_info_separado(clan_tag)
 
     members_dict = await coc_comm.get_members_info(betis_clan_tag)
     members = DictToDataFrame.members_dict_to_dataframe(members_dict)
