@@ -6,3 +6,6 @@
 
 # Ignorar fichero de notas
 notas.txt
+
+__pycache__/
+*.pyc
