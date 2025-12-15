@@ -1,0 +1,8 @@
+# Ignorar entorno virtual en la raíz
+/.venv/
+
+# Ignorar configuración de editor PyCharm/IDEA
+/.idea/
+
+# Ignorar fichero de notas
+notas.txt

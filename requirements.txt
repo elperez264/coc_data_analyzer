@@ -1,0 +1,6 @@
+streamlit
+streamlit-authenticator
+python-dotenv
+torch
+requests
+bcrypt

@@ -1,0 +1,13 @@
+# Opción A — compatible con streamlit_authenticator (recomendada)
+credentials:
+  usernames:
+    perez:
+      name: Pérez
+      password: $2b$12$EXAMPL3HASHVALUEw7Qe0...   # hash generado por Hasher
+
+cookie:
+  name: mesa_de_guerra_cookie
+  key: REEMPLAZA_POR_UN_TOKEN_SEGUR0
+  expiry_days: 30
+
+preauthorized: {}
