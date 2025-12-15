@@ -7,7 +7,7 @@
 # Ignorar fichero de notas
 notas.txt
 
-__pycache__/
+/__pycache__/
 *.pyc
 
-DB/BetisDB.db
+/DB/BetisDB.db
