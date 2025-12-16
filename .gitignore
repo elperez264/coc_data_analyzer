@@ -9,5 +9,6 @@ notas.txt
 
 /__pycache__/
 *.pyc
-
+/BD/
+/DB/BetisDB.db
 .env

@@ -278,10 +278,7 @@ async def main_async():
         summary = db_management.add_members_and_attacks(members=members, opponents=opponents, clan_tag=betis_clan_tag,
                                               opponent_clan_tag=enemy_clan.tag)
         print(summary)
-        print("Miembros de la guerra añadidos a la base de datos.")
-        db_adapter.get_all_war_members()
-        print("ATAQUES")
-        db_adapter.get_all_war_attacks()
+
         if war_info.state == "terminada":
             st.subheader('Mesa de Guerra Bética')
             st.write("La guerra ha terminado, descansen béticocs.")

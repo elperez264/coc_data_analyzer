@@ -8,7 +8,8 @@ from typing import Optional
 class War:
     def __init__(self, is_league: bool, end_hour: str, end_date: Optional[datetime], state: Optional[str] = None,
         opponent_name: Optional[str] = None, tag_opponent: Optional[str] = None, date_end: Optional[str] = None,
-        time_left: Optional[str] = None, is_preparation_day: bool = False, attacks_per_member: int = 2):
+        time_left: Optional[str] = None, is_preparation_day: bool = False, attacks_per_member: int = 2,
+                 start_date: Optional[datetime] = None):
 
         self.end_date = end_date
         self.state = state
@@ -20,6 +21,7 @@ class War:
         self.attacks_per_member = attacks_per_member
         self.is_league = is_league
         self.end_hour = end_hour
+        self.start_date = start_date
 
 
 
@@ -102,7 +104,7 @@ class War:
         opponent_tag = getattr(getattr(war, "opponent", None), "tag", None)
 
         return cls(end_date=fin_utc, state=war_state, opponent_name=opponent_name, tag_opponent=opponent_tag,
-                   date_end=fecha_fin_str, time_left=tiempo_rest, is_preparation_day=prep,
+                   date_end=fecha_fin_str, time_left=tiempo_rest, is_preparation_day=prep, start_date=str(inicio_naive),
                    attacks_per_member=attacks_per_member, is_league=is_league, end_hour=hora_str)
 
 
