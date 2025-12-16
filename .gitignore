@@ -13,3 +13,4 @@ __pycache__/
 /BD/
 /DB/BetisDB.db
 .env
+coc.env
