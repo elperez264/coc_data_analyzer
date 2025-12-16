@@ -33,9 +33,9 @@ def check_password(plain_password: str) -> bool:
 
 async def main_async():
     load_dotenv()
-    email = os.getenv("EMAIL")
-    password = os.getenv("COCKEY")
-    my_clan = os.getenv("MY_CLAN")
+    email = st.secrets["EMAIL"]
+    password = st.secrets["COCKEY"]
+    my_clan = st.secrets["MY_CLAN"]
 
 
     if not email or not password:
