@@ -1,7 +1,5 @@
-import asyncio
 import coc
-from datetime import datetime, timezone, timedelta
-from zoneinfo import ZoneInfo
+
 from typing import Dict, List
 
 
@@ -14,10 +12,25 @@ class CocCommunication:
 
 
     @classmethod
-    async def create(cls, email: str, password: str, my_clan: str):
+    async def create(cls, api_token: str, my_clan: str):
         client = coc.Client()
-        await client.login(email, password)  # login es async
-        return cls(client, email, password, my_clan)
+
+        await client.login_with_tokens(api_token)
+
+        return cls(
+            client=client,
+            email="",
+            password="",
+            my_clan=my_clan
+        )
+
+    @classmethod
+    async def create_by_account(cls, email, password, my_clan):
+        client = coc.Client(key_names="Betis_Streamlit", key_count=1)
+
+        await client.login(email=email, password=password)
+
+        return cls(client=client, my_clan=my_clan, email=email, password=password)
 
 
     @staticmethod

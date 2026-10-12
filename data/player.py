@@ -142,3 +142,35 @@ class Player:
 
             for attr, val in mapping.items():
                 _set_safe(player, attr, val)
+
+
+    @staticmethod
+    def from_dicts(players_dicts: List[dict]) -> List['Player']:
+        """
+        Reconstruye una lista de objetos Player a partir de
+        diccionarios generados mediante dataclasses.asdict().
+        """
+        players = []
+
+        for data in players_dicts:
+            # Reconstruir las medallas
+            medals_data = data.get("medals")
+
+            medals = (
+                [Medal(**medal) for medal in medals_data]
+                if medals_data is not None
+                else None
+            )
+
+            # Reconstruir el jugador usando su constructor
+            player = Player(
+                tag=data["_tag"],
+                username=data["_username"],
+                rank=data.get("_rank", Rank.MEMBER),
+                medals=medals,
+                membership_days=data.get("membership_days", 0.0)
+            )
+
+            players.append(player)
+
+        return players

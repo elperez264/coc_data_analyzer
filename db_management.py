@@ -1,4 +1,4 @@
-from DB_sqlite import SQLiteAdapter
+from DB_sqlite import SQLAdapter
 from typing import Dict, List
 from data.player import Player
 from data.medal import Medal
@@ -8,7 +8,7 @@ from datetime import datetime
 
 
 class DbManagement:
-    def __init__(self, db_adapter: SQLiteAdapter):
+    def __init__(self, db_adapter: SQLAdapter):
         self.db_adapter = db_adapter
 
     def get_all_players(self) -> List[Player]:
@@ -18,6 +18,7 @@ class DbManagement:
             players_list.append(Player(tag=row["player_tag"], username=row["username"],
                                        membership_days=self.get_membership_days(row["player_tag"])["total_days"]))
         return players_list
+
 
     # python
     def add_players(self, players: List[Dict]):
@@ -200,7 +201,8 @@ class DbManagement:
                                        attacks_per_member=attacks_per_member, date=war.start_date)
 
     # python
-    def add_members_and_attacks(self, members: List, opponents: List, clan_tag: str, opponent_clan_tag: str) -> Dict:
+    def add_members_and_attacks(self, members: List, opponents: List, clan_tag: str, war_id: int,
+                                opponent_clan_tag: str) -> Dict:
         """
         Inserta war_members y attacks para ambos bandos.
         - members: lista de jugadores del clan (cada uno con 'tag','name','map_position','townhall','ataques_realizados')
@@ -212,8 +214,8 @@ class DbManagement:
             raise ValueError("members y opponents deben ser listas")
         if not clan_tag:
             raise ValueError("clan_tag es obligatorio")
-        if not opponent_clan_tag:
-            raise ValueError("opponent_clan_tag es obligatorio")
+        if not war_id:
+            raise ValueError("war_id es obligatorio")
 
         summary = {
             "players_processed": 0,
@@ -223,17 +225,10 @@ class DbManagement:
             "attacks_skipped": 0
         }
 
-        # Asegurar guerras para ambos bandos (silencioso)
-        try:
-            self.db_adapter.add_war(clan_opponent_tag=opponent_clan_tag, end_hour="00:00")
-        except Exception:
-            pass
-        try:
-            self.db_adapter.add_war(clan_opponent_tag=clan_tag, end_hour="00:00")
-        except Exception:
-            pass
+        if not self.db_adapter.war_exists(war_id):
+            raise ValueError("No existe una guerra registrada para el id: " + str(war_id))
 
-        def _process_side(players_list: List[dict], owner_clan_tag: str, enemy_clan_tag: str):
+        def _process_side(players_list: List[Dict], owner_clan_tag: str):
             """
             owner_clan_tag: tag del clan al que pertenece cada jugador de esta lista
             enemy_clan_tag: tag del clan contrario (se usará como clan_opponent_tag)
@@ -262,25 +257,11 @@ class DbManagement:
                         added = self.db_adapter.add_war_member(
                             player_tag=ptag,
                             clan_tag=owner_clan_tag,
-                            clan_opponent_tag=enemy_clan_tag,
                             town_hall=townhall,
                             map_position=map_pos,
-                            check_war_exists=True
-                        )
+                            war_id=war_id)
                     except ValueError:
-                        # intentar crear la guerra correspondiente y reintentar
-                        try:
-                            self.db_adapter.add_war(clan_opponent_tag=enemy_clan_tag, end_hour="00:00")
-                            added = self.db_adapter.add_war_member(
-                                player_tag=ptag,
-                                clan_tag=owner_clan_tag,
-                                clan_opponent_tag=enemy_clan_tag,
-                                town_hall=townhall,
-                                map_position=map_pos,
-                                check_war_exists=True
-                            )
-                        except Exception:
-                            added = False
+                        added = False
 
                     if added:
                         summary["members_inserted"] += 1
@@ -315,7 +296,8 @@ class DbManagement:
                                 player_opponent_tag=target_tag,
                                 stars=stars,
                                 destruction=destruction,
-                                duration=duration
+                                duration=duration,
+                                war_id=war_id
                             )
                             if inserted:
                                 summary["attacks_inserted"] += 1
@@ -328,9 +310,9 @@ class DbManagement:
                     continue
 
         # Procesar oponentes: owner_clan = opponent_clan_tag, enemy_clan = clan_tag
-        _process_side(opponents, owner_clan_tag=opponent_clan_tag, enemy_clan_tag=clan_tag)
+        _process_side(opponents, owner_clan_tag=opponent_clan_tag)
         # Procesar miembros propios: owner_clan = clan_tag, enemy_clan = opponent_clan_tag
-        _process_side(members, owner_clan_tag=clan_tag, enemy_clan_tag=opponent_clan_tag)
+        _process_side(members, owner_clan_tag=clan_tag)
 
         return summary
 

@@ -1,8 +1,11 @@
 import os
+from typing import Dict
+from dataclasses import asdict
+
 import streamlit as st
 from betis_management import CocCommunication
-from db_adapter import DbManagement
-from DB_sqlite import SQLiteAdapter
+from db_management import DbManagement
+from DB_sqlite import SQLAdapter
 from dict_to_df import DictToDataFrame
 from dataframe_operations import DataFrameOperations
 from string_operations import  StringOperations
@@ -14,13 +17,153 @@ import bcrypt
 from dotenv import load_dotenv
 import torch
 import asyncio
-import requests
-from config import DB_PATH
+import pickle
 
 torch.classes.__path__ = []
 
 
+from dataclasses import is_dataclass, fields
+from enum import Enum
+from datetime import datetime, date
 
+
+def to_serializable(obj):
+    """Convierte datos a estructuras simples serializables."""
+
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+
+    if isinstance(obj, Enum):
+        return obj.value
+
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+
+    if isinstance(obj, dict):
+        return {
+            str(k): to_serializable(v)
+            for k, v in obj.items()
+        }
+
+    if isinstance(obj, (list, tuple, set)):
+        return [to_serializable(v) for v in obj]
+
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return {
+            f.name: to_serializable(getattr(obj, f.name))
+            for f in fields(obj)
+        }
+
+    raise TypeError(
+        f"No se puede serializar un objeto de tipo "
+        f"{type(obj).__name__}"
+    )
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_war_data(clan_tag):
+    return asyncio.run(fetch_war_data(clan_tag))
+
+async def fetch_war_data(clan_tag):
+    _, db_management = get_db_classes()
+    coc_comm = await create_coc_communication()
+    coc_war_obj = await coc_comm.get_war(clan_tag)
+    war_info = War.get_war_info(coc_war_obj)
+
+    if war_info is None:
+        return None, None, None, None, None
+
+    members, opponents = await coc_comm.get_war_players_info_separado(clan_tag=clan_tag)
+
+    enemy_info = await coc_comm.get_clan_info(war_info.tag_opponent)
+    enemy_info = fix_badge_url(enemy_info)
+    war_id = db_management.add_war_from_object(war=war_info)
+    return war_info.to_dict(), members, opponents, enemy_info, war_id
+
+
+def comprobar_pickle(**objetos):
+    for nombre, objeto in objetos.items():
+        try:
+            pickle.dumps(objeto)
+            print(f"[OK] {nombre}: {type(objeto)}")
+        except Exception as e:
+            print(f"[ERROR] {nombre}: {type(objeto)}")
+            print(f"        {repr(e)}")
+
+@st.cache_resource
+def get_db_classes():
+    db_key = st.secrets["DB_KEY"]
+    db_url = st.secrets["DB_URL"]
+    db_adapter = SQLAdapter(db_url=db_url, db_key=db_key)
+    db_management = DbManagement(db_adapter=db_adapter)
+    return db_adapter, db_management
+
+
+# async def create_coc_communication():
+#     api_token = st.secrets["COC_API_TOKEN"]
+#     my_clan = st.secrets["MY_CLAN"]
+#     if not api_token:
+#         raise RuntimeError(f"api_token no están definidos correctamente.")
+#     coc_comm = await CocCommunication.create(api_token=api_token, my_clan=my_clan)
+#     return coc_comm
+async def create_coc_communication():
+    email = st.secrets["EMAIL"]
+    password = st.secrets["COCKEY"]
+    my_clan = st.secrets["MY_CLAN"]
+
+    if not email or not password:
+        raise RuntimeError("Las credenciales de Clash of Clans no están configuradas.")
+
+    coc_comm = await CocCommunication.create_by_account(email=email, password=password, my_clan=my_clan)
+
+    return coc_comm
+
+@st.cache_data(ttl=28800, show_spinner=False)
+def get_clan_data(_db_management: DbManagement):
+    return asyncio.run(fetch_clan_data(_db_management))
+
+async def fetch_clan_data(db_management: DbManagement):
+    coc_comm = await create_coc_communication()
+    clan_tag = await coc_comm.get_clan_tag("Betis CoC Club")
+    clan_info = await coc_comm.get_clan_info(clan_tag)
+    clan_info = fix_badge_url(clan_info)
+    clan_info["icon"] = {}
+
+    members_dict = await coc_comm.get_members_info(clan_tag)
+
+    members = DictToDataFrame.members_dict_to_dataframe(members_dict)
+    betis_clan = Clan.from_dict(clan_info)
+
+    print("Añadiendo jugadores a la base de datos...")
+    db_management.add_players(members_dict)
+    _ = db_management.add_betis_clan_info(betis_info=betis_clan)
+
+    print("Recuperando jugadores de la base de datos...")
+    players = db_management.get_all_players()
+    players_usernames = []
+    for player in players:
+        player.medals = db_management.get_player_medals(player.tag)
+        players_usernames.append(player.username)
+    print(f"Se han recuperado {len(players_usernames)} nombres de jugadores de la base de datos.")
+    Player.populate_from_dicts(players, members_dict)
+
+    members = DataFrameOperations.add_medals_and_days_to_players_df(members, players)
+    players_dicts = [asdict(player) for player in players]
+
+    return (
+        clan_tag,
+        to_serializable(clan_info),
+        members,
+        to_serializable(players_dicts),
+        players_usernames
+    )
+
+def fix_badge_url(clan_info: Dict) -> Dict:
+    if clan_info is not None:
+        badge = clan_info.get("badge")
+        if badge is not None:
+            clan_info["badge"] = {"url": badge.url}
+    return clan_info
 
 def check_password(plain_password: str) -> bool:
     """Verifica la contraseña contra el hash almacenado en .env"""
@@ -31,51 +174,14 @@ def check_password(plain_password: str) -> bool:
     return bcrypt.checkpw(plain_password.encode(), hashed_password)
 
 
-async def main_async():
+def main():
     load_dotenv()
-    email = st.secrets["EMAIL"]
-    password = st.secrets["COCKEY"]
-    my_clan = st.secrets["MY_CLAN"]
 
+    db_adapter, db_management = get_db_classes()
 
-    if not email or not password:
-        raise RuntimeError(
-            f"EMAIL o COCKEY no están definidos correctamente. "
-            f"EMAIL={email!r}, COCKEY definido={bool(password)}"
-        )
-
-    coc_comm = await CocCommunication.create(email=email, password=password, my_clan=my_clan)
-    betis_clan_tag = await coc_comm.get_clan_tag("Betis CoC Club")
-    clan_info = await coc_comm.get_clan_info(betis_clan_tag)
+    betis_clan_tag, clan_info, members, players_dict, players_usernames = get_clan_data(db_management)
     betis_clan = Clan.from_dict(clan_info)
-    db_adapter = SQLiteAdapter(db_name=DB_PATH)
-
-
-    members_dict = await coc_comm.get_members_info(betis_clan_tag)
-    members = DictToDataFrame.members_dict_to_dataframe(members_dict)
-    db_management = DbManagement(db_adapter=db_adapter)
-    db_management.add_players(members_dict)
-    _ = db_management.add_betis_clan_info(betis_info=betis_clan)
-
-    players = db_management.get_all_players()
-    players_usernames = []
-
-    for player in players:
-        player.medals = db_management.get_player_medals(player.tag)
-        players_usernames.append(player.username)
-
-    Player.populate_from_dicts(players, members_dict)
-
-    members = DataFrameOperations.add_medals_and_days_to_players_df(members, players)
-
-    badge_url = betis_clan.badge_url#clan_info["badge"].url
-    response = requests.get(badge_url)
-    image_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '.', 'images', 'clan_badge.png'))
-    if os.path.exists(image_path):
-        os.remove(image_path)
-
-    with open(image_path, "wb") as f:
-        f.write(response.content)
+    players = Player.from_dicts(players_dict)
 
     st.set_page_config(
         page_title="Mesa de Guerra Bética",
@@ -97,7 +203,6 @@ async def main_async():
         st.write("Introduce tu **nombre en el juego**, no importan las mayúsculas, acentos ni símbolos.")
 
         username_input = st.text_input("Nombre de jugador")
-
         password_input = None  # solo se usará si es colíder
 
         if username_input:
@@ -148,11 +253,10 @@ async def main_async():
         login_screen()
         return
 
-    # ==== DESDE AQUÍ TU APP NORMAL (antes estaba dentro del if authentication_status) ====
-
     st.session_state['file_downloaded'] = False
 
-    st.sidebar.image(image_path, use_container_width=True)
+    # st.sidebar.image(image_path, use_container_width=True)
+    st.sidebar.image(betis_clan.badge_url, use_container_width=True)
     st.sidebar.write("<br>" * 1, unsafe_allow_html=True)
     st.sidebar.markdown(f"<small><i>{betis_clan.description}</i><small>", unsafe_allow_html=True)
 
@@ -260,23 +364,13 @@ async def main_async():
                 else:
                     st.write(st.session_state["name"].replace('$', r'\$') + " no tiene agravios.")
 
-
-
-    coc_war_obj = await coc_comm.get_war(betis_clan_tag)
-    war_info = await War.get_war_info(coc_war_obj)
-
-    if db_management.add_war_from_object(war=war_info):
-        print("Guerra añadida a la base de datos.")
-
-    members, opponents = await coc_comm.get_war_players_info_separado(clan_tag=betis_clan_tag)
-
-
-    col_enemy_clan_info, col_enemy_badge, _ = st.columns([ 6, 2, 2])
-    if war_info is not None:
-
-        enemy_clan = Clan.from_dict(await coc_comm.get_clan_info(war_info.tag_opponent))
+    war_info, members, opponents, enemy_info, war_id = get_war_data(betis_clan_tag)
+    war_info = War.from_dict(war_info)
+    enemy_clan = Clan.from_dict(enemy_info) if enemy_info else None
+    if war_info is not None and enemy_clan is not None:
+        col_enemy_clan_info, col_enemy_badge, _ = st.columns([6, 2, 2])
         summary = db_management.add_members_and_attacks(members=members, opponents=opponents, clan_tag=betis_clan_tag,
-                                              opponent_clan_tag=enemy_clan.tag)
+                                              opponent_clan_tag=enemy_clan.tag, war_id=war_id)
         print(summary)
 
         if war_info.state == "terminada":
@@ -299,14 +393,16 @@ async def main_async():
                             <img src="{enemy_clan.badge_url}" width="200" style="display:block; margin:8px auto;" />
                         </div>
                         """, unsafe_allow_html=True)
+    else:
+        st.info("El clan no está actualmente en guerra.")
 
 
 
 
 
 
-def main():
-    asyncio.run(main_async())   # 🚀 Ejecuta lo async
+# def main():
+#     asyncio.run(main_async())   # 🚀 Ejecuta lo async
 
 
 # Reemplazar el bloque __main__ para no forzar el login

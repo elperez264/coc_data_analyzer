@@ -1,14 +1,34 @@
-import sqlite3
+import libsql
 from datetime import datetime
 from typing import Optional, Union
 import pandas as pd
 
 
-class SQLiteAdapter:
-    def __init__(self, db_name: str):
-        self.__db_name = db_name
+class SQLAdapter:
+    def __init__(self, db_url: str, db_key):
+        self._db_url = db_url
+        self._db_key = db_key
         self.__create_tables()
 
+
+    def _connect(self):
+        return libsql.connect(database=self._db_url, auth_token=self._db_key)
+
+
+    def _query_dataframe(self, query: str, params=(), columns=None):
+        conn = self._connect()
+
+        try:
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
+
+            if columns is None:
+                columns = [col[0] for col in cursor.description]
+
+            return pd.DataFrame(rows, columns=columns)
+
+        finally:
+            conn.close()
 
 
     def get_all_players(self) -> pd.DataFrame:
@@ -18,20 +38,16 @@ class SQLiteAdapter:
         Lanza ImportError si pandas no está instalado.
         """
 
-        conn = sqlite3.connect(self.__db_name)
-        try:
-            # seleccionamos únicamente las columnas requeridas y ordenamos por username (ignorando mayúsculas)
-            query = """
-                SELECT player_tag, username
-                FROM players
-                ORDER BY username COLLATE NOCASE
-            """
-            df = pd.read_sql_query(query, conn)
-            # asegurarnos del orden/tuplas de columnas esperado
-            df = df.loc[:, ["player_tag", "username"]]
-            return df
-        finally:
-            conn.close()
+        # conn = self._connect()
+        # seleccionamos únicamente las columnas requeridas y ordenamos por username (ignorando mayúsculas)
+        query = """
+            SELECT player_tag, username
+            FROM players
+            ORDER BY username COLLATE NOCASE
+        """
+        return self._query_dataframe(query, columns=["player_tag", "username"])
+
+
 
     def add_or_update_player(self, username: str, player_tag: str) -> int:
         """
@@ -41,7 +57,7 @@ class SQLiteAdapter:
         if not player_tag:
             raise ValueError("player_tag es obligatorio")
 
-        conn = sqlite3.connect(self.__db_name)
+        conn = self._connect()
         cur = conn.cursor()
         try:
             cur.execute("PRAGMA foreign_keys = ON")
@@ -68,6 +84,7 @@ class SQLiteAdapter:
             return rowid
         finally:
             conn.close()
+
 
     def add_donation(self,
                      player_tag: str,
@@ -112,7 +129,7 @@ class SQLiteAdapter:
         else:
             raise ValueError("date debe ser None, str o datetime")
 
-        conn = sqlite3.connect(self.__db_name)
+        conn = self._connect()
         cur = conn.cursor()
         try:
             # Activar comprobación de foreign keys (por si la tabla tiene FK)
@@ -166,7 +183,7 @@ class SQLiteAdapter:
 
         desc = description.strip()
 
-        conn = sqlite3.connect(self.__db_name)
+        conn = self._connect()
         cur = conn.cursor()
         try:
             cur.execute("PRAGMA foreign_keys = ON")
@@ -190,33 +207,62 @@ class SQLiteAdapter:
             conn.close()
 
 
+    # def get_medals_by_player(self, player_tag: str) -> pd.DataFrame:
+    #     """
+    #     Devuelve un pandas.DataFrame con todas las medallas del jugador indicado.
+    #     Columnas: 'id', 'player_tag', 'description', 'is_positive' (bool), ordenadas por id DESC.
+    #     Lanza ValueError si player_tag está vacío.
+    #     """
+    #     if not player_tag:
+    #         raise ValueError("player_tag es obligatorio")
+    #
+    #     conn = self._connect()
+    #     try:
+    #         query = """
+    #             SELECT id, player_tag, description, is_positive
+    #             FROM medals
+    #             WHERE player_tag = ?
+    #             ORDER BY id DESC
+    #         """
+    #         df = pd.read_sql_query(query, conn, params=[player_tag])
+    #         # Asegurar orden de columnas esperado incluso si no hay filas
+    #         for col in ["id", "player_tag", "description", "is_positive"]:
+    #             if col not in df.columns:
+    #                 df[col] = pd.Series(dtype="object")
+    #         # Normalizar is_positive a booleano (0/1 -> False/True)
+    #         df["is_positive"] = df["is_positive"].astype(bool)
+    #         return df.loc[:, ["id", "player_tag", "description", "is_positive"]]
+    #     finally:
+    #         conn.close()
+
     def get_medals_by_player(self, player_tag: str) -> pd.DataFrame:
         """
         Devuelve un pandas.DataFrame con todas las medallas del jugador indicado.
-        Columnas: 'id', 'player_tag', 'description', 'is_positive' (bool), ordenadas por id DESC.
+        Columnas: 'id', 'player_tag', 'description', 'is_positive' (bool),
+        ordenadas por id DESC.
+
         Lanza ValueError si player_tag está vacío.
         """
+
         if not player_tag:
             raise ValueError("player_tag es obligatorio")
 
-        conn = sqlite3.connect(self.__db_name)
-        try:
-            query = """
-                SELECT id, player_tag, description, is_positive
-                FROM medals
-                WHERE player_tag = ?
-                ORDER BY id DESC
-            """
-            df = pd.read_sql_query(query, conn, params=[player_tag])
-            # Asegurar orden de columnas esperado incluso si no hay filas
-            for col in ["id", "player_tag", "description", "is_positive"]:
-                if col not in df.columns:
-                    df[col] = pd.Series(dtype="object")
-            # Normalizar is_positive a booleano (0/1 -> False/True)
-            df["is_positive"] = df["is_positive"].astype(bool)
-            return df.loc[:, ["id", "player_tag", "description", "is_positive"]]
-        finally:
-            conn.close()
+        query = """
+            SELECT id, player_tag, description, is_positive
+            FROM medals
+            WHERE player_tag = ?
+            ORDER BY id DESC
+        """
+
+        df = self._query_dataframe(query, params=(player_tag,),
+            columns=["id", "player_tag", "description", "is_positive"]
+        )
+
+        # Normalizar 0/1 -> False/True
+        df["is_positive"] = df["is_positive"].astype(bool)
+
+        return df.loc[:, ["id", "player_tag", "description", "is_positive"]]
+
 
     @staticmethod
     def _parse_date_to_str(date: Optional[Union[str, datetime]]) -> str:
@@ -294,7 +340,7 @@ class SQLiteAdapter:
 
         date_day = dt.date().isoformat()
 
-        conn = sqlite3.connect(self.__db_name)
+        conn = self._connect()
         cur = conn.cursor()
         try:
             cur.execute("PRAGMA foreign_keys = ON")
@@ -364,7 +410,7 @@ class SQLiteAdapter:
         # normalizar fecha a 'YYYY-MM-DD HH:MM:SS'
         date_str = self._parse_date_to_str(date)
 
-        conn = sqlite3.connect(self.__db_name)
+        conn = self._connect()
         cur = conn.cursor()
         try:
             cur.execute("PRAGMA foreign_keys = ON")
@@ -388,98 +434,118 @@ class SQLiteAdapter:
             conn.close()
 
 
+    # def get_membership_by_player(self, player_tag: str) -> pd.DataFrame:
+    #     """
+    #     Devuelve un pandas.DataFrame con los eventos de membresía del jugador.
+    #     Columnas: id, player_tag, event_date (datetime), event_type, notes.
+    #     """
+    #     if not player_tag:
+    #         raise ValueError("player_tag es obligatorio")
+    #
+    #     conn = self._connect()
+    #     try:
+    #         query = """
+    #             SELECT id, player_tag, event_date, event_type, notes
+    #             FROM clan_membership
+    #             WHERE player_tag = ?
+    #             ORDER BY event_date DESC, id DESC
+    #         """
+    #         df = pd.read_sql_query(query, conn, params=[player_tag])
+    #
+    #         # Asegurar columnas incluso si no hay filas
+    #         for col in ["id", "player_tag", "event_date", "event_type", "notes"]:
+    #             if col not in df.columns:
+    #                 df[col] = pd.Series(dtype="object")
+    #
+    #         # Normalizar event_date a datetime (NaT si no parseable)
+    #         df["event_date"] = pd.to_datetime(df["event_date"], errors="coerce")
+    #
+    #         return df.loc[:, ["id", "player_tag", "event_date", "event_type", "notes"]]
+    #     finally:
+    #         conn.close()
+
     def get_membership_by_player(self, player_tag: str) -> pd.DataFrame:
         """
         Devuelve un pandas.DataFrame con los eventos de membresía del jugador.
         Columnas: id, player_tag, event_date (datetime), event_type, notes.
         """
+
         if not player_tag:
             raise ValueError("player_tag es obligatorio")
 
-        conn = sqlite3.connect(self.__db_name)
+        query = """
+            SELECT id, player_tag, event_date, event_type, notes
+            FROM clan_membership
+            WHERE player_tag = ?
+            ORDER BY event_date DESC, id DESC
+        """
+
+        df = self._query_dataframe(query, params=(player_tag,),
+            columns=["id", "player_tag", "event_date", "event_type", "notes"]
+        )
+
+        # Normalizar event_date a datetime (NaT si no es parseable)
+        df["event_date"] = pd.to_datetime(df["event_date"], errors="coerce")
+
+        return df.loc[
+            :,
+            ["id", "player_tag", "event_date", "event_type", "notes"]
+        ]
+
+
+    def get_war_id(self, opponent_clan_tag: str, date: Union[str, datetime]) -> Optional[int]:
+        """
+        Busca una guerra existente por la combinación (clan_opponent_tag, date),
+        que coincide con el índice UNIQUE de la tabla `wars`.
+        Devuelve el `id` si existe, o None si no hay ninguna guerra registrada
+        con ese rival en esa fecha.
+        """
+        if not opponent_clan_tag:
+            raise ValueError("clan_opponent_tag es obligatorio")
+
+        date_str = self._parse_date_to_str(date)
+
+        conn = self._connect()
+        cur = conn.cursor()
         try:
-            query = """
-                SELECT id, player_tag, event_date, event_type, notes
-                FROM clan_membership
-                WHERE player_tag = ?
-                ORDER BY event_date DESC, id DESC
-            """
-            df = pd.read_sql_query(query, conn, params=[player_tag])
-
-            # Asegurar columnas incluso si no hay filas
-            for col in ["id", "player_tag", "event_date", "event_type", "notes"]:
-                if col not in df.columns:
-                    df[col] = pd.Series(dtype="object")
-
-            # Normalizar event_date a datetime (NaT si no parseable)
-            df["event_date"] = pd.to_datetime(df["event_date"], errors="coerce")
-
-            return df.loc[:, ["id", "player_tag", "event_date", "event_type", "notes"]]
+            cur.execute(
+                "SELECT id FROM wars WHERE clan_opponent_tag = ? AND date = ? LIMIT 1",
+                (opponent_clan_tag, date_str)
+            )
+            row = cur.fetchone()
+            return row[0] if row is not None else None
         finally:
             conn.close()
 
 
-    # def add_war(self, clan_opponent_tag: str, end_hour: str, is_league: bool = False,
-    #             attacks_per_member: int = 2) -> bool:
-    #     """
-    #     Inserta una guerra en la tabla `wars` verificando unicidad por clan_opponent_tag.
-    #     Devuelve True si se inserta, False si ya existe.
-    #     """
-    #     if not clan_opponent_tag:
-    #         raise ValueError("clan_opponent_tag es obligatorio")
-    #
-    #     # Normalizar end_hour a 'HH:MM' o 'HH:MM:SS'
-    #     try:
-    #         dt = datetime.strptime(end_hour, "%H:%M:%S")
-    #         end_norm = dt.strftime("%H:%M:%S")
-    #     except Exception:
-    #         try:
-    #             dt = datetime.strptime(end_hour, "%H:%M")
-    #             end_norm = dt.strftime("%H:%M")
-    #         except Exception:
-    #             raise ValueError("end_hour debe tener formato 'HH:MM' o 'HH:MM:SS'")
-    #
-    #     try:
-    #         attacks_per_member = int(attacks_per_member)
-    #         if attacks_per_member < 0:
-    #             raise ValueError()
-    #     except Exception:
-    #         raise ValueError("attacks_per_member debe ser un entero >= 0")
-    #
-    #     is_league_int = 1 if is_league else 0
-    #
-    #     conn = sqlite3.connect(self.__db_name)
-    #     cur = conn.cursor()
-    #     try:
-    #         cur.execute("PRAGMA foreign_keys = ON")
-    #
-    #         # Intentar obtener la guerra existente por la columna correcta
-    #         cur.execute(
-    #             "SELECT rowid, clan_opponent_tag, end_hour, is_league, attacks_per_member FROM wars WHERE clan_opponent_tag = ? LIMIT 1",
-    #             (clan_opponent_tag,)
-    #         )
-    #         existing = cur.fetchone()
-    #         if existing is not None:
-    #             return False
-    #
-    #         # Insertar nueva guerra
-    #         cur.execute(
-    #             """
-    #             INSERT INTO wars (clan_opponent_tag, end_hour, is_league, attacks_per_member)
-    #             VALUES (?, ?, ?, ?)
-    #             """,
-    #             (clan_opponent_tag, end_norm, is_league_int, attacks_per_member)
-    #         )
-    #         conn.commit()
-    #         return True
-    #     finally:
-    #         conn.close()
-
-    def add_war(self, clan_opponent_tag: str, end_hour: str, is_league: bool = False,
-                attacks_per_member: int = 2, date: Optional[Union[str, datetime]] = None) -> bool:
+    def war_exists(self, war_id: int) -> bool:
         """
-        Inserta una guerra en la tabla `wars` verificando unicidad por clan_opponent_tag.
-        Devuelve True si se inserta, False si ya existe.
+        Comprueba si existe una guerra con el `id` dado en la tabla `wars`.
+        Devuelve True si existe, False en caso contrario.
+        """
+        if war_id is None:
+            raise ValueError("war_id es obligatorio")
+
+        try:
+            war_id = int(war_id)
+        except (TypeError, ValueError):
+            raise ValueError("war_id debe ser un entero")
+
+        conn = self._connect()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT 1 FROM wars WHERE id = ? LIMIT 1", (war_id,))
+            return cur.fetchone() is not None
+        finally:
+            conn.close()
+
+
+    def add_war(self, clan_opponent_tag: str, end_hour: str, date: Union[str, datetime], is_league: bool = False,
+                attacks_per_member: int = 2) -> int:
+        """
+        Inserta una guerra en la tabla `wars` verificando unicidad por (clan_opponent_tag, date).
+        Devuelve el `id` de la guerra: el existente si ya estaba registrada, o el recién
+        insertado en caso contrario.
         Parámetro adicional:
         - date: fecha opcional (str o datetime). Si se proporciona, se normaliza y almacena en la columna `date`.
         """
@@ -511,19 +577,14 @@ class SQLiteAdapter:
         if date is not None:
             date_str = self._parse_date_to_str(date)
 
-        conn = sqlite3.connect(self.__db_name)
+        conn = self._connect()
         cur = conn.cursor()
         try:
             cur.execute("PRAGMA foreign_keys = ON")
 
-            # Intentar obtener la guerra existente por la columna correcta
-            cur.execute(
-                "SELECT rowid FROM wars WHERE clan_opponent_tag = ? LIMIT 1",
-                (clan_opponent_tag,)
-            )
-            existing = cur.fetchone()
-            if existing is not None:
-                return False
+            existing_war_id = self.get_war_id(clan_opponent_tag, date_str)
+            if existing_war_id is not None:
+                return existing_war_id
 
             # Insertar nueva guerra (incluye columna date)
             cur.execute(
@@ -534,14 +595,13 @@ class SQLiteAdapter:
                 (clan_opponent_tag, end_norm, is_league_int, attacks_per_member, date_str)
             )
             conn.commit()
-            return True
+            return cur.lastrowid
         finally:
             conn.close()
 
 
-
-    def add_war_member(self, player_tag: str, clan_tag: str, clan_opponent_tag: str, town_hall: Optional[int] = None,
-                       map_position: Optional[int] = None, check_war_exists: bool = True) -> bool:
+    def add_war_member(self, player_tag: str, clan_tag: str, war_id: int, town_hall: Optional[int] = None,
+                       map_position: Optional[int] = None) -> bool:
         """
         Inserta un miembro de guerra en `war_members`. Si ya existe la combinación
         (player_tag, clan_tag, clan_opponent_tag) devuelve False, si no la inserta y
@@ -551,8 +611,8 @@ class SQLiteAdapter:
             raise ValueError("player_tag es obligatorio")
         if not clan_tag:
             raise ValueError("clan_tag es obligatorio")
-        if not clan_opponent_tag:
-            raise ValueError("clan_opponent_tag es obligatorio")
+        if not war_id:
+            raise ValueError("war_id es obligatorio")
 
         # Normalizar enteros opcionales
         try:
@@ -564,21 +624,18 @@ class SQLiteAdapter:
         except (TypeError, ValueError):
             raise ValueError("map_position debe ser un entero o None")
 
-        conn = sqlite3.connect(self.__db_name)
+        conn = self._connect()
         cur = conn.cursor()
         try:
             cur.execute("PRAGMA foreign_keys = ON")
 
-            if check_war_exists:
-                # comprobar existencia de la guerra usando la columna correcta
-                cur.execute("SELECT 1 FROM wars WHERE clan_opponent_tag = ? LIMIT 1", (clan_opponent_tag,))
-                if cur.fetchone() is None:
-                    raise ValueError(f"clan_opponent_tag '{clan_opponent_tag}' no existe en la tabla wars")
+            if not self.war_exists(war_id=war_id):
+                raise ValueError(f"La guerra con war_id '{war_id}' no existe en la tabla wars")
 
             # Comprobar existencia de la combinación única
             cur.execute(
-                "SELECT rowid FROM war_members WHERE player_tag = ? AND clan_tag = ? AND clan_opponent_tag = ? LIMIT 1",
-                (player_tag, clan_tag, clan_opponent_tag)
+                "SELECT rowid FROM war_members WHERE player_tag = ? AND clan_tag = ? AND war_id = ? LIMIT 1",
+                (player_tag, clan_tag, war_id)
             )
             existing = cur.fetchone()
             if existing is not None:
@@ -587,18 +644,19 @@ class SQLiteAdapter:
             # Insertar nueva fila
             cur.execute(
                 """
-                INSERT INTO war_members (player_tag, clan_tag, clan_opponent_tag, town_hall, map_position)
+                INSERT INTO war_members (player_tag, clan_tag, war_id, town_hall, map_position)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (player_tag, clan_tag, clan_opponent_tag, town_hall, map_position)
+                (player_tag, clan_tag, war_id, town_hall, map_position)
             )
             conn.commit()
             return True
         finally:
             conn.close()
 
+
     def add_attack(self, player_tag: str, player_opponent_tag: str, stars: int, destruction: Union[float, int],
-                   duration: int) -> bool:
+                   duration: int, war_id: int) -> bool:
         """
         Inserta un ataque en la tabla `attacks`. Si ya existe otra fila con la misma
         combinación (excepto id) devuelve su rowid; si no, inserta y devuelve el nuevo rowid.
@@ -632,19 +690,19 @@ class SQLiteAdapter:
         if duration < 0:
             raise ValueError("duration debe ser >= 0")
 
-        conn = sqlite3.connect(self.__db_name)
+        conn = self._connect()
         cur = conn.cursor()
         try:
             cur.execute("PRAGMA foreign_keys = ON")
 
-            # Comprobar existencia de la combinación única (ignorando id)
+            # Comprobar existencia de la combinación única
             cur.execute(
                 """
                 SELECT rowid FROM attacks
-                WHERE player_tag = ? AND player_opponent_tag = ? AND stars = ? AND destruction = ? AND duration = ?
+                WHERE player_tag = ? AND player_opponent_tag = ? AND war_id = ?
                 LIMIT 1
                 """,
-                (player_tag, player_opponent_tag, stars, destruction, duration)
+                (player_tag, player_opponent_tag, war_id)
             )
             existing = cur.fetchone()
             if existing is not None:
@@ -653,10 +711,10 @@ class SQLiteAdapter:
             # Insertar nuevo ataque
             cur.execute(
                 """
-                INSERT INTO attacks (player_tag, player_opponent_tag, stars, destruction, duration)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO attacks (player_tag, player_opponent_tag, stars, destruction, duration, war_id)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (player_tag, player_opponent_tag, stars, destruction, duration)
+                (player_tag, player_opponent_tag, stars, destruction, duration, war_id)
             )
             conn.commit()
             return True
@@ -670,20 +728,19 @@ class SQLiteAdapter:
         Columnas en este orden: id, player_tag, clan_tag, opponent_tag, town_hall, map_position.
         (Se hace alias de clan_opponent_tag a opponent_tag para compatibilidad).
         """
-        conn = sqlite3.connect(self.__db_name)
-        try:
-            query = """
-                SELECT id, player_tag, clan_tag, clan_opponent_tag AS opponent_tag, town_hall, map_position
-                FROM war_members
-                ORDER BY (map_position IS NULL), map_position, id
-            """
-            df = pd.read_sql_query(query, conn)
-            # Asegurar orden/tuplas de columnas esperado incluso si no hay filas
-            df = df.loc[:, ["id", "player_tag", "clan_tag", "opponent_tag", "town_hall", "map_position"]]
-            print(df)
-            return df
-        finally:
-            conn.close()
+
+        query = """
+            SELECT id, player_tag, clan_tag, clan_opponent_tag AS opponent_tag, town_hall, map_position
+            FROM war_members
+            ORDER BY (map_position IS NULL), map_position, id
+        """
+        # df = pd.read_sql_query(query, conn)
+        df = self._query_dataframe(query, params=())
+        # Asegurar orden/tuplas de columnas esperado incluso si no hay filas
+        df = df.loc[:, ["id", "player_tag", "clan_tag", "opponent_tag", "town_hall", "map_position"]]
+        print(df)
+        return df
+
 
     def get_all_war_attacks(self) -> pd.DataFrame:
         """
@@ -691,17 +748,15 @@ class SQLiteAdapter:
         Columnas en este orden: id, player_tag, clan_tag, opponent_tag, town_hall, map_position.
         (Se hace alias de clan_opponent_tag a opponent_tag para compatibilidad).
         """
-        conn = sqlite3.connect(self.__db_name)
-        try:
-            query = """
-                SELECT *
-                FROM attacks
-            """
-            df = pd.read_sql_query(query, conn)
-            print(df)
-            return df
-        finally:
-            conn.close()
+
+        query = """
+            SELECT *
+            FROM attacks
+        """
+        df = self._query_dataframe(query, params=())
+        print(df)
+        return df
+
 
     def get_all_wars(self) -> pd.DataFrame:
         """
@@ -709,21 +764,18 @@ class SQLiteAdapter:
         Columnas en este orden: id, player_tag, clan_tag, opponent_tag, town_hall, map_position.
         (Se hace alias de clan_opponent_tag a opponent_tag para compatibilidad).
         """
-        conn = sqlite3.connect(self.__db_name)
-        try:
-            query = """
-                SELECT *
-                FROM wars
-            """
-            df = pd.read_sql_query(query, conn)
-            print(df)
-            return df
-        finally:
-            conn.close()
+        query = """
+            SELECT *
+            FROM wars
+        """
+        df = self._query_dataframe(query, params=())
+        print(df)
+        return df
+
 
 
     def __create_tables(self):
-        connection = sqlite3.connect(self.__db_name)
+        connection = self._connect()
         cursor = connection.cursor()
 
         # Tabla de jugadores
@@ -785,20 +837,22 @@ class SQLiteAdapter:
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS wars (
-                clan_opponent_tag TEXT NOT NULL UNIQUE,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                clan_opponent_tag TEXT NOT NULL,
                 end_hour TEXT NOT NULL, -- formato 'HH:MM o HH:MM:SS'
                 is_league INTEGER NOT NULL DEFAULT 0 CHECK (is_league IN (0,1)),
                 attacks_per_member INTEGER NOT NULL DEFAULT 2,
-                date TEXT  -- fecha asociada a la guerra (ISO 'YYYY-MM-DD HH:MM:SS' o NULL)
+                date TEXT,  -- fecha asociada a la guerra (ISO 'YYYY-MM-DD HH:MM:SS' o NULL),
+                UNIQUE(clan_opponent_tag, date)
             );
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS war_members (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                war_id INTEGER REFERENCES wars(id),
                 player_tag TEXT NOT NULL,
                 clan_tag TEXT NOT NULL,
-                clan_opponent_tag TEXT NOT NULL,
                 town_hall INTEGER,
                 map_position INTEGER
             )
@@ -807,6 +861,7 @@ class SQLiteAdapter:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS attacks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                war_id INTEGER REFERENCES wars(id),
                 player_tag TEXT NOT NULL,
                 player_opponent_tag TEXT NOT NULL,
                 stars INTEGER NOT NULL CHECK (stars IN (0,1,2,3)),

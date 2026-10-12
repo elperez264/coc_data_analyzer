@@ -5,3 +5,4 @@ torch
 requests
 bcrypt
 coc.py==3.9.1
+libsql
